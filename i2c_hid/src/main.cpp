@@ -1,5 +1,10 @@
 #include <Wire.h>
 
+int8_t rotationSteps;
+uint8_t buttonPress[5];
+uint8_t buttonLongPress[5];
+
+
 void receiveEvent(int howMany) {
   while (Wire.available()) {
     byte b = Wire.read();
@@ -22,7 +27,7 @@ void setup() {
   address |= digitalRead(4) << 2;
   address |= digitalRead(5) << 3;
   Wire.begin(address);
-  
+
   Wire.onReceive(receiveEvent);
   Wire.onRequest(requestEvent);
 }
