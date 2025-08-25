@@ -26,7 +26,8 @@ void ReadButtons(bool *states, int num)
 
 EZButton _ezb(5, ReadButtons, 1000, 200, 15);
 
-void IRAM_ATTR handleEncoder()
+void handleEncoder()
+// void IRAM_ATTR handleEncoder()
 {
   static uint8_t lastState = 0;
   uint8_t state = (digitalRead(ROTARY_A) << 1) | digitalRead(ROTARY_B);
@@ -37,14 +38,14 @@ void IRAM_ATTR handleEncoder()
       (lastState == 0b11 && state == 0b10) ||
       (lastState == 0b10 && state == 0b00))
   {
-    encoderValue++;
+    rotationSteps++;
   }
   else if ((lastState == 0b00 && state == 0b10) ||
            (lastState == 0b10 && state == 0b11) ||
            (lastState == 0b11 && state == 0b01) ||
            (lastState == 0b01 && state == 0b00))
   {
-    encoderValue--;
+    rotationSteps--;
   }
 
   lastState = state;
