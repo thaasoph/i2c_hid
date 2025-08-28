@@ -13,7 +13,7 @@ const uint8_t BTN_4_PIN = PIN_PC3;
 
 volatile int8_t rotationSteps;
 uint8_t buttonPress[5];
-uint8_t buttonLongPress[5];
+uint8_t buttonHold[5];
 
 void ReadButtons(bool *states, int num)
 {
@@ -24,7 +24,20 @@ void ReadButtons(bool *states, int num)
   states[4] = !digitalRead(BTN_4_PIN);
 }
 
-EZButton _ezb(5, ReadButtons, 1000, 200, 15);
+void btnPress(int index)
+{
+  buttonPress[index]++;
+}
+
+void btnHold(int index)
+{
+    buttonHold[index]++;
+}
+
+// HoldThreshold: 500ms
+// HoldInterval: 300ms
+// DebounceTime: 15ms
+EZButton _ezb(5, ReadButtons, 500, 300, 15);
 
 void handleEncoder()
 // void IRAM_ATTR handleEncoder()
@@ -61,18 +74,23 @@ int8_t getAndResetRotationSteps()
   return val;
 }
 
-void receiveEvent(int howMany)
-{
-  while (Wire.available())
-  {
-    byte b = Wire.read();
-    // handle incoming data
-  }
-}
+// void receiveEvent(int howMany)
+// {
+//   while (Wire.available())
+//   {
+//     byte b = Wire.read();
+//     // handle incoming data
+//   }
+// }
 
 void requestEvent()
 {
-  Wire.write(42); // respond with one byte
+  Wire.write(getAndResetRotationSteps());
+  Wire.write(buttonPress, sizeof(buttonPress));
+  memset(buttonPress, 0, sizeof(buttonPress));
+  Wire.write(buttonHold, sizeof(buttonHold));
+  memset(buttonHold, 0, sizeof(buttonHold));
+
 }
 
 void initRotaryEncoder()
@@ -91,6 +109,16 @@ void initButtons()
   pinMode(BTN_2_PIN, INPUT_PULLUP);
   pinMode(BTN_3_PIN, INPUT_PULLUP);
   pinMode(BTN_4_PIN, INPUT_PULLUP);
+  _ezb.Subscribe(0, btnHold, HOLD);
+  _ezb.Subscribe(0, btnPress, RELEASED);
+  _ezb.Subscribe(1, btnHold, HOLD);
+  _ezb.Subscribe(1, btnPress, RELEASED);
+  _ezb.Subscribe(2, btnHold, HOLD);
+  _ezb.Subscribe(2, btnPress, RELEASED);
+  _ezb.Subscribe(3, btnHold, HOLD);
+  _ezb.Subscribe(3, btnPress, RELEASED);
+  _ezb.Subscribe(4, btnHold, HOLD);
+  _ezb.Subscribe(4, btnPress, RELEASED);
 }
 
 void initWire()
@@ -105,7 +133,7 @@ void initWire()
   address |= digitalRead(PIN_PA6) << 2;
   address |= digitalRead(PIN_PA7) << 3;
   Wire.begin(address);
-  Wire.onReceive(receiveEvent);
+  // Wire.onReceive(receiveEvent);
   Wire.onRequest(requestEvent);
 }
 
