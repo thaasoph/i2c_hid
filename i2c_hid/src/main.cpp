@@ -31,7 +31,7 @@ void btnPress(int index)
 
 void btnHold(int index)
 {
-    buttonHold[index]++;
+  buttonHold[index]++;
 }
 
 // HoldThreshold: 500ms
@@ -40,7 +40,6 @@ void btnHold(int index)
 EZButton _ezb(5, ReadButtons, 500, 300, 15);
 
 void handleEncoder()
-// void IRAM_ATTR handleEncoder()
 {
   static uint8_t lastState = 0;
   uint8_t state = (digitalRead(ROTARY_A) << 1) | digitalRead(ROTARY_B);
@@ -90,7 +89,6 @@ void requestEvent()
   memset(buttonPress, 0, sizeof(buttonPress));
   Wire.write(buttonHold, sizeof(buttonHold));
   memset(buttonHold, 0, sizeof(buttonHold));
-
 }
 
 void initRotaryEncoder()
@@ -143,9 +141,11 @@ void setup()
   initWire();
   initRotaryEncoder();
   initButtons();
+  pinMode(PIN_PB5, OUTPUT);
 }
 
 void loop()
 {
   _ezb.Loop();
+  Serial.println(rotationSteps);
 }
