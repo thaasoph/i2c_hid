@@ -11,7 +11,7 @@ const uint8_t BTN_2_PIN = PIN_PC1;
 const uint8_t BTN_3_PIN = PIN_PC2;
 const uint8_t BTN_4_PIN = PIN_PC3;
 
-volatile int8_t rotationSteps;
+volatile int16_t rotationSteps;
 uint8_t buttonPress[5];
 uint8_t buttonHold[5];
 
@@ -67,7 +67,7 @@ int8_t getAndResetRotationSteps()
 {
   int8_t val;
   noInterrupts();
-  val = rotationSteps;
+  val = rotationSteps / 4;
   rotationSteps = 0;
   interrupts();
   return val;
@@ -137,7 +137,7 @@ void initWire()
 
 void setup()
 {
-  Serial.begin(115200);
+  Serial.begin(57600);
   initWire();
   initRotaryEncoder();
   initButtons();
@@ -147,5 +147,4 @@ void setup()
 void loop()
 {
   _ezb.Loop();
-  Serial.println(rotationSteps);
 }
