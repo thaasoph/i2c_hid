@@ -1,4 +1,4 @@
-#define F_CPU 20000000UL
+// #define F_CPU 20000000UL
 #include <Wire.h>
 #include <EZButton.h>
 
@@ -10,10 +10,15 @@ const uint8_t BTN_1_PIN = PIN_PC0;
 const uint8_t BTN_2_PIN = PIN_PC1;
 const uint8_t BTN_3_PIN = PIN_PC2;
 const uint8_t BTN_4_PIN = PIN_PC3;
+const uint8_t fractionDebounce = 100;
 
-volatile int16_t rotationSteps;
-uint8_t buttonPress[5];
-uint8_t buttonHold[5];
+
+volatile int16_t rotationSteps = 0;
+uint8_t buttonPress[5] = {0};
+uint8_t buttonHold[5] = {0};
+
+
+
 
 void ReadButtons(bool *states, int num)
 {
@@ -42,6 +47,15 @@ EZButton _ezb(5, ReadButtons, 500, 300, 15);
 void handleEncoder()
 {
   static uint8_t lastState = 0;
+  static long lastChange = 0;
+
+  if(millis() - lastChange > fractionDebounce){
+    if(rotationSteps>-4 && rotationSteps<4){
+      rotationSteps = 0;
+    }
+  }
+  
+
   uint8_t state = (digitalRead(ROTARY_A) << 1) | digitalRead(ROTARY_B);
 
   // Transition table (Gray code)
@@ -61,14 +75,22 @@ void handleEncoder()
   }
 
   lastState = state;
+  lastChange = millis();
 }
 
 int8_t getAndResetRotationSteps()
 {
+  static long fractionSet;
   int8_t val;
   noInterrupts();
   val = rotationSteps / 4;
-  rotationSteps = 0;
+  if (val != 0){
+    rotationSteps = rotationSteps % 4;
+    if( rotationSteps != 0){
+      fractionSet = millis();
+    }
+  }
+  // Serial0.printf("left: %d\n", rotationSteps );
   interrupts();
   return val;
 }
@@ -137,14 +159,15 @@ void initWire()
 
 void setup()
 {
-  Serial.begin(57600);
+  Serial0.begin(57600);
   initWire();
   initRotaryEncoder();
   initButtons();
-  pinMode(PIN_PB5, OUTPUT);
 }
 
 void loop()
 {
   _ezb.Loop();
+  // Serial0.printf("%d %d %d %d %d %d", rotationSteps, buttonPress[0], buttonPress[1], buttonPress[2], buttonPress[3], buttonPress[4]);
+  // Serial0.println();
 }
