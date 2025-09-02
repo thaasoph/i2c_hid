@@ -103,13 +103,13 @@ int8_t getAndResetRotationSteps()
 
 void createResponseBuffer()
 {
+  Serial0.println("creating response buffer");
   uint8_t idx = 0;
   responseBuffer[idx] = getAndResetRotationSteps();
   idx++;
   memcpy( &responseBuffer[idx], &buttonPress, sizeof(buttonPress) );
   memset(buttonPress, 0, sizeof(buttonPress));
-  idx+=sizeof(buttonPress);
-  
+  idx+=sizeof(buttonPress);  
   
   memcpy( &responseBuffer[idx], &buttonHold, sizeof(buttonHold) );
   memset(buttonHold, 0, sizeof(buttonHold));
@@ -117,6 +117,7 @@ void createResponseBuffer()
 }
 
 void recoverBus() {
+    Serial0.println("performing bus recover");
     TWI0.SCTRLA &= ~TWI_ENABLE_bm; // Disable TWI
     _delay_us(5);
     TWI0.SCTRLA |= TWI_ENABLE_bm;  // Re-enable
@@ -139,16 +140,19 @@ ISR(TWI0_TWIS_vect) {
 
     if (status & TWI_DIF_bm) { // Data interrupt
         if (TWI0.SSTATUS & TWI_DIR_bm) { // Master reads
+            Serial0.println("master read");
+            
             if(bufferIndex == 0){
               createResponseBuffer();
             }
             if (bufferIndex < sizeof(responseBuffer)) {
-                TWI0.SDATA = responseBuffer[bufferIndex++];
+              TWI0.SDATA = responseBuffer[bufferIndex++];
             } else {
-                TWI0.SDATA = 0xFF; // End of buffer, send 0xFF
+              TWI0.SDATA = 0xFF; // End of buffer, send 0xFF
             }
             TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK next byte
-        } else { // Master writes
+          } else { // Master writes
+            Serial0.println("master write");
             volatile uint8_t data = TWI0.SDATA; // Read byte (ignore for now)
             TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK
         }
@@ -188,11 +192,11 @@ void initButtons()
 
 void initI2C()
 {
-  pinMode(PIN_PA6, INPUT);
-  pinMode(PIN_PA7, INPUT);
-  address |= digitalRead(PIN_PA6);
-  address |= digitalRead(PIN_PA7) << 1;
-
+  pinMode(PIN_PA6, INPUT_PULLUP);
+  pinMode(PIN_PA7, INPUT_PULLUP);
+  address |= !digitalRead(PIN_PA6);
+  address |= !digitalRead(PIN_PA7) << 1;
+  Serial0.printf("starting i2c with address: %x", address);
   TWI0.SADDR = address << 1;          // 7-bit address, LSB ignored
   TWI0.SCTRLA = TWI_ENABLE_bm | TWI_PIEN_bm; // Enable TWI and slave interrupts
   TWI0.SCTRLB = 0;                           // Clear CTRLB
