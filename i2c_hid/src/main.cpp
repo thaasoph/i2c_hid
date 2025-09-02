@@ -107,59 +107,68 @@ void createResponseBuffer()
   uint8_t idx = 0;
   responseBuffer[idx] = getAndResetRotationSteps();
   idx++;
-  memcpy( &responseBuffer[idx], &buttonPress, sizeof(buttonPress) );
+  memcpy(&responseBuffer[idx], &buttonPress, sizeof(buttonPress));
   memset(buttonPress, 0, sizeof(buttonPress));
-  idx+=sizeof(buttonPress);  
-  
-  memcpy( &responseBuffer[idx], &buttonHold, sizeof(buttonHold) );
+  idx += sizeof(buttonPress);
+
+  memcpy(&responseBuffer[idx], &buttonHold, sizeof(buttonHold));
   memset(buttonHold, 0, sizeof(buttonHold));
-  idx+=sizeof(buttonHold);
+  idx += sizeof(buttonHold);
 }
 
-void recoverBus() {
-    Serial0.println("performing bus recover");
-    TWI0.SCTRLA &= ~TWI_ENABLE_bm; // Disable TWI
-    _delay_us(5);
-    TWI0.SCTRLA |= TWI_ENABLE_bm;  // Re-enable
-    bufferIndex = 0;
+void recoverBus()
+{
+  Serial0.println("performing bus recover");
+  TWI0.SCTRLA &= ~TWI_ENABLE_bm; // Disable TWI
+  _delay_us(5);
+  TWI0.SCTRLA |= TWI_ENABLE_bm; // Re-enable
+  bufferIndex = 0;
 }
 
 // === TWI0 Interrupt ===
-ISR(TWI0_TWIS_vect) {
-    uint8_t status = TWI0.SSTATUS;
+ISR(TWI0_TWIS_vect)
+{
+  uint8_t status = TWI0.SSTATUS;
 
-    if (status & TWI_BUSERR_bm) {
-        recoverBus();
-        return;
-    }
+  if (status & TWI_BUSERR_bm)
+  {
+    recoverBus();
+    return;
+  }
 
-    if (status & TWI_APIF_bm) { // Address/Stop condition detected
-        bufferIndex = 0;
-        TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK
-    }
+  if (TWI0.SSTATUS & TWI_APIF_bm)
+  {
+    TWI0.SSTATUS = TWI_APIF_bm; // clear flag
+    bufferIndex = 0;
+    TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc;
+  }
 
-    if (status & TWI_DIF_bm) { // Data interrupt
-        if (TWI0.SSTATUS & TWI_DIR_bm) { // Master reads
-            Serial0.println("master read");
-            
-            if(bufferIndex == 0){
-              createResponseBuffer();
-            }
-            if (bufferIndex < sizeof(responseBuffer)) {
-              TWI0.SDATA = responseBuffer[bufferIndex++];
-            } else {
-              TWI0.SDATA = 0xFF; // End of buffer, send 0xFF
-            }
-            TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK next byte
-          } else { // Master writes
-            Serial0.println("master write");
-            volatile uint8_t data = TWI0.SDATA; // Read byte (ignore for now)
-            TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK
-        }
+  if (status & TWI_DIF_bm)
+  { // Data interrupt
+    if (TWI0.SSTATUS & TWI_DIR_bm)
+    { // Master reads
+
+      if (bufferIndex == 0)
+      {
+        createResponseBuffer();
+      }
+      if (bufferIndex < sizeof(responseBuffer))
+      {
+        TWI0.SDATA = responseBuffer[bufferIndex++];
+      }
+      else
+      {
+        TWI0.SDATA = 0xFF; // End of buffer, send 0xFF
+      }
+      TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK next byte
     }
+    else
+    {                                      // Master writes
+      volatile uint8_t data = TWI0.SDATA;  // Read byte (ignore for now)
+      TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK
+    }
+  }
 }
-
-
 
 void initRotaryEncoder()
 {
@@ -189,7 +198,6 @@ void initButtons()
   _ezb.Subscribe(4, btnPress, RELEASED);
 }
 
-
 void initI2C()
 {
   pinMode(PIN_PA6, INPUT_PULLUP);
@@ -197,7 +205,7 @@ void initI2C()
   address |= !digitalRead(PIN_PA6);
   address |= !digitalRead(PIN_PA7) << 1;
   Serial0.printf("starting i2c with address: %x", address);
-  TWI0.SADDR = address << 1;          // 7-bit address, LSB ignored
+  TWI0.SADDR = address << 1;                 // 7-bit address, LSB ignored
   TWI0.SCTRLA = TWI_ENABLE_bm | TWI_PIEN_bm; // Enable TWI and slave interrupts
   TWI0.SCTRLB = 0;                           // Clear CTRLB
   TWI0.SSTATUS = TWI_BUSERR_bm;              // Clear bus error flag
