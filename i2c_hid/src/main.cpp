@@ -1,8 +1,12 @@
 // #define F_CPU 20000000UL
-#include <Wire.h>
 #include <EZButton.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
 
 const uint8_t ADDRESS_BASE = 0x60;
+uint8_t address = ADDRESS_BASE;
+
 const uint8_t ROTARY_BTN_PIN = PIN_PA3;
 const uint8_t ROTARY_A = PIN_PA1;
 const uint8_t ROTARY_B = PIN_PA2;
@@ -12,13 +16,12 @@ const uint8_t BTN_3_PIN = PIN_PC2;
 const uint8_t BTN_4_PIN = PIN_PC3;
 const uint8_t fractionDebounce = 100;
 
-
-volatile int16_t rotationSteps = 0;
+volatile uint8_t rotationSteps = 0;
 uint8_t buttonPress[5] = {0};
 uint8_t buttonHold[5] = {0};
 
-
-
+uint8_t responseBuffer[11] = {0};
+uint8_t bufferIndex = 0;
 
 void ReadButtons(bool *states, int num)
 {
@@ -49,12 +52,13 @@ void handleEncoder()
   static uint8_t lastState = 0;
   static long lastChange = 0;
 
-  if(millis() - lastChange > fractionDebounce){
-    if(rotationSteps>-4 && rotationSteps<4){
+  if (millis() - lastChange > fractionDebounce)
+  {
+    if (rotationSteps > -4 && rotationSteps < 4)
+    {
       rotationSteps = 0;
     }
   }
-  
 
   uint8_t state = (digitalRead(ROTARY_A) << 1) | digitalRead(ROTARY_B);
 
@@ -84,9 +88,11 @@ int8_t getAndResetRotationSteps()
   int8_t val;
   noInterrupts();
   val = rotationSteps / 4;
-  if (val != 0){
+  if (val != 0)
+  {
     rotationSteps = rotationSteps % 4;
-    if( rotationSteps != 0){
+    if (rotationSteps != 0)
+    {
       fractionSet = millis();
     }
   }
@@ -95,23 +101,61 @@ int8_t getAndResetRotationSteps()
   return val;
 }
 
-// void receiveEvent(int howMany)
-// {
-//   while (Wire.available())
-//   {
-//     byte b = Wire.read();
-//     // handle incoming data
-//   }
-// }
-
-void requestEvent()
+void createResponseBuffer()
 {
-  Wire.write(getAndResetRotationSteps());
-  Wire.write(buttonPress, sizeof(buttonPress));
+  uint8_t idx = 0;
+  responseBuffer[idx] = getAndResetRotationSteps();
+  idx++;
+  memcpy( &responseBuffer[idx], &buttonPress, sizeof(buttonPress) );
   memset(buttonPress, 0, sizeof(buttonPress));
-  Wire.write(buttonHold, sizeof(buttonHold));
+  idx+=sizeof(buttonPress);
+  
+  
+  memcpy( &responseBuffer[idx], &buttonHold, sizeof(buttonHold) );
   memset(buttonHold, 0, sizeof(buttonHold));
+  idx+=sizeof(buttonHold);
 }
+
+void recoverBus() {
+    TWI0.SCTRLA &= ~TWI_ENABLE_bm; // Disable TWI
+    _delay_us(5);
+    TWI0.SCTRLA |= TWI_ENABLE_bm;  // Re-enable
+    bufferIndex = 0;
+}
+
+// === TWI0 Interrupt ===
+ISR(TWI0_TWIS_vect) {
+    uint8_t status = TWI0.SSTATUS;
+
+    if (status & TWI_BUSERR_bm) {
+        recoverBus();
+        return;
+    }
+
+    if (status & TWI_APIF_bm) { // Address/Stop condition detected
+        bufferIndex = 0;
+        TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK
+    }
+
+    if (status & TWI_DIF_bm) { // Data interrupt
+        if (TWI0.SSTATUS & TWI_DIR_bm) { // Master reads
+            if(bufferIndex == 0){
+              createResponseBuffer();
+            }
+            if (bufferIndex < sizeof(responseBuffer)) {
+                TWI0.SDATA = responseBuffer[bufferIndex++];
+            } else {
+                TWI0.SDATA = 0xFF; // End of buffer, send 0xFF
+            }
+            TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK next byte
+        } else { // Master writes
+            volatile uint8_t data = TWI0.SDATA; // Read byte (ignore for now)
+            TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK
+        }
+    }
+}
+
+
 
 void initRotaryEncoder()
 {
@@ -141,26 +185,28 @@ void initButtons()
   _ezb.Subscribe(4, btnPress, RELEASED);
 }
 
-void initWire()
+
+void initI2C()
 {
-  pinMode(PIN_PA4, INPUT);
-  pinMode(PIN_PA5, INPUT);
   pinMode(PIN_PA6, INPUT);
   pinMode(PIN_PA7, INPUT);
-  uint8_t address = ADDRESS_BASE;
-  address |= digitalRead(PIN_PA4);
-  address |= digitalRead(PIN_PA5) << 1;
-  address |= digitalRead(PIN_PA6) << 2;
-  address |= digitalRead(PIN_PA7) << 3;
-  Wire.begin(address);
-  // Wire.onReceive(receiveEvent);
-  Wire.onRequest(requestEvent);
+  address |= digitalRead(PIN_PA6);
+  address |= digitalRead(PIN_PA7) << 1;
+
+  TWI0.SADDR = address << 1;          // 7-bit address, LSB ignored
+  TWI0.SCTRLA = TWI_ENABLE_bm | TWI_PIEN_bm; // Enable TWI and slave interrupts
+  TWI0.SCTRLB = 0;                           // Clear CTRLB
+  TWI0.SSTATUS = TWI_BUSERR_bm;              // Clear bus error flag
+
+  bufferIndex = 0;
+
+  sei(); // Enable global interrupts
 }
 
 void setup()
 {
   Serial0.begin(57600);
-  initWire();
+  initI2C();
   initRotaryEncoder();
   initButtons();
 }
