@@ -1,8 +1,11 @@
-// #define F_CPU 20000000UL
 #include <EZButton.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
+
+// Attempt counter / watchdog for recovery
+volatile uint8_t twiRecoveryAttempts = 0;
+const uint8_t MAX_RECOVERY_ATTEMPTS = 3;
 
 const uint8_t ADDRESS_BASE = 0x60;
 uint8_t address = ADDRESS_BASE;
@@ -16,12 +19,14 @@ const uint8_t BTN_3_PIN = PIN_PC2;
 const uint8_t BTN_4_PIN = PIN_PC3;
 const uint8_t fractionDebounce = 100;
 
-volatile uint8_t rotationSteps = 0;
+volatile uint8_t busStatus = 0;
+
+volatile int8_t rotationSteps = 0;
 uint8_t buttonPress[5] = {0};
 uint8_t buttonHold[5] = {0};
 
-uint8_t responseBuffer[11] = {0};
-uint8_t bufferIndex = 0;
+uint8_t responseBuffer[12] = {0};
+volatile uint8_t bufferIndex = 0;
 
 void ReadButtons(bool *states, int num)
 {
@@ -96,17 +101,15 @@ int8_t getAndResetRotationSteps()
       fractionSet = millis();
     }
   }
-  // Serial0.printf("left: %d\n", rotationSteps );
   interrupts();
   return val;
 }
 
 void createResponseBuffer()
 {
-  Serial0.println("creating response buffer");
   uint8_t idx = 0;
-  responseBuffer[idx] = getAndResetRotationSteps();
-  idx++;
+  responseBuffer[idx++] = busStatus;
+  responseBuffer[idx++] = getAndResetRotationSteps();
   memcpy(&responseBuffer[idx], &buttonPress, sizeof(buttonPress));
   memset(buttonPress, 0, sizeof(buttonPress));
   idx += sizeof(buttonPress);
@@ -118,11 +121,22 @@ void createResponseBuffer()
 
 void recoverBus()
 {
-  Serial0.println("performing bus recover");
+  // Disable interrupts around re-init
+  uint8_t oldSREG = SREG;
+  cli();
   TWI0.SCTRLA &= ~TWI_ENABLE_bm; // Disable TWI
+
   _delay_us(5);
   TWI0.SCTRLA |= TWI_ENABLE_bm; // Re-enable
   bufferIndex = 0;
+  // Re-enable global interrupts
+  SREG = oldSREG;
+
+   // Track recovery attempts (optional): if too many, allow watchdog to reset
+  if (++twiRecoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
+    // let watchdog reset (or call a software reset)
+    // wdt_enable(WDTO_1S); while(1);
+  }
 }
 
 // === TWI0 Interrupt ===
@@ -130,22 +144,27 @@ ISR(TWI0_TWIS_vect)
 {
   uint8_t status = TWI0.SSTATUS;
 
-  if (status & TWI_BUSERR_bm)
+  // ---------- Bus error handling ----------
+  if (status & (TWI_BUSERR_bm | TWI_ARBLOST_bm | TWI_COLL_bm))
   {
+    busStatus |= status;
+    TWI0.SSTATUS = TWI_BUSERR_bm | TWI_ARBLOST_bm | TWI_COLL_bm;
     recoverBus();
     return;
   }
 
-  if (TWI0.SSTATUS & TWI_APIF_bm)
+  // ---------- Address match ----------
+  if (status & TWI_APIF_bm)
   {
-    TWI0.SSTATUS = TWI_APIF_bm; // clear flag
     bufferIndex = 0;
-    TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc;
+    TWI0.SSTATUS = TWI_APIF_bm; // clear flag
+    return;
   }
 
+  // ---------- Data transfer ----------
   if (status & TWI_DIF_bm)
   { // Data interrupt
-    if (TWI0.SSTATUS & TWI_DIR_bm)
+    if (status & TWI_DIR_bm)
     { // Master reads
 
       if (bufferIndex == 0)
@@ -160,13 +179,21 @@ ISR(TWI0_TWIS_vect)
       {
         TWI0.SDATA = 0xFF; // End of buffer, send 0xFF
       }
-      TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK next byte
     }
     else
-    {                                      // Master writes
-      volatile uint8_t data = TWI0.SDATA;  // Read byte (ignore for now)
-      TWI0.SCTRLB |= TWI_SCMD_RESPONSE_gc; // ACK
+    {                                     // Master writes
+      volatile uint8_t data = TWI0.SDATA; // Read byte (ignore for now)
     }
+    return;
+  }
+
+  // ---------- Stop condition ----------
+  if (status & TWI_APIF_bm)
+  {
+
+    TWI0.SCTRLB = TWI_SCMD_COMPTRANS_gc;
+    bufferIndex = 0;
+    return;
   }
 }
 
@@ -204,9 +231,11 @@ void initI2C()
   pinMode(PIN_PA7, INPUT_PULLUP);
   address |= !digitalRead(PIN_PA6);
   address |= !digitalRead(PIN_PA7) << 1;
-  Serial0.printf("starting i2c with address: %x", address);
   TWI0.SADDR = address << 1;                 // 7-bit address, LSB ignored
-  TWI0.SCTRLA = TWI_ENABLE_bm | TWI_PIEN_bm; // Enable TWI and slave interrupts
+  TWI0.SCTRLA = TWI_ENABLE_bm | TWI_APIEN_bm // Address or Stop Interrupt Enable
+                | TWI_DIEN_bm                // Data Interrupt Enable
+                | TWI_PIEN_bm                // Stop Interrupt Enable
+                | TWI_SMEN_bm;               // Smart Mode Enable
   TWI0.SCTRLB = 0;                           // Clear CTRLB
   TWI0.SSTATUS = TWI_BUSERR_bm;              // Clear bus error flag
 
